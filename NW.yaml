@@ -1,0 +1,239 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Provision EC2
+ 
+ #=================================
+ #初期設定　KEY及びIP
+ #=================================
+Parameters: 
+  KeyName:
+    Description: The EC2 Key Pair to allow SSH access to the instance
+    Type: "AWS::EC2::KeyPair::KeyName"
+
+  MyIP:
+    Description: IP address allowed to access EC2
+    Type: String
+
+ #=================================
+ # VPCの作成
+ #=================================
+Resources:
+  RAISE:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      Tags:
+      - Key: Name
+        Value: RAISE
+
+ #=================================
+ # サブネットの作成
+ #=================================
+  PUBLIC: 
+    Type: "AWS::EC2::Subnet"
+    Properties: 
+      AvailabilityZone: "ap-northeast-1a"
+      CidrBlock: 10.0.10.0/24
+      VpcId: !Ref RAISE 
+      Tags: 
+        - Key: Name
+          Value: PUBLIC
+
+  PUBLIC2: 
+    Type: "AWS::EC2::Subnet"
+    Properties: 
+      AvailabilityZone: "ap-northeast-1c"
+      CidrBlock: 10.0.11.0/24
+      VpcId: !Ref RAISE
+      Tags: 
+        - Key: Name
+          Value: PUBLIC2
+
+  PRIVATE: 
+    Type: "AWS::EC2::Subnet"
+    Properties: 
+      AvailabilityZone: "ap-northeast-1a"
+      CidrBlock: 10.0.20.0/24
+      VpcId: !Ref RAISE
+      Tags: 
+        - Key: Name
+          Value: PRIVATE
+
+  PRIVATE2: 
+    Type: "AWS::EC2::Subnet"
+    Properties: 
+      AvailabilityZone: "ap-northeast-1c"
+      CidrBlock: 10.0.21.0/24
+      VpcId: !Ref RAISE
+      Tags: 
+        - Key: Name
+          Value: PRIVATE2
+
+#=================================
+# インターネットゲートウェイ作成
+#=================================
+  IGW:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: NETGW-RAISE
+
+#=================================
+# IGWをVPCにアタッチ
+#=================================
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref RAISE
+      InternetGatewayId: !Ref IGW
+
+
+#=================================
+# IGW用ルートテーブル作成
+#=================================
+  PubSubRT:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref RAISE
+      Tags:
+        - Key: Name
+          Value: RUTE-TABLE-RAISE_PUBLIC
+
+#=================================
+# IGW用ルートテーブルに0.0.0.0/0をアタッチ
+#=================================
+  PubSubToInternet:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PubSubRT
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref IGW
+
+#=================================
+# IGW用ルートテーブルをサブネットにアタッチ
+#=================================
+  AssoPubSubRT:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PUBLIC
+      RouteTableId: !Ref PubSubRT
+
+#=================================
+# EC2作成
+#=================================
+
+  EC2: 
+    Type: AWS::EC2::Instance
+    Properties: 
+      ImageId: ami-00d101850e971728d
+      KeyName: !Ref KeyName
+      InstanceType: t2.micro
+      NetworkInterfaces: 
+        - AssociatePublicIpAddress: "true"
+          DeviceIndex: "0"
+          SubnetId: !Ref PUBLIC
+          GroupSet:
+            - !Ref SECURITYGW
+      Tags:
+          - Key: Name
+            Value: RAISE-EC2
+#=================================
+# セキュリティグループ作成
+#=================================S
+
+  SECURITYGW:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: SECURITYGW
+      GroupDescription: Allow SSH and HTTP access only MyIP
+      VpcId: !Ref RAISE
+      SecurityGroupIngress:
+        # http
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: !Ref MyIP
+        # ssh
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref MyIP
+#=================================
+# ターゲットグループ作成
+#=================================
+
+  RAISETG:
+    Type: "AWS::ElasticLoadBalancingV2::TargetGroup"
+    Properties: 
+      VpcId: !Ref RAISE
+      Protocol: HTTP
+      Port: 80
+      HealthCheckProtocol: HTTP
+      HealthCheckPath: "/"
+      HealthCheckPort: "traffic-port"
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 2
+      HealthCheckTimeoutSeconds: 5
+      HealthCheckIntervalSeconds: 10
+      Tags: 
+        - Key: Name
+          Value: RATG
+      Matcher: 
+        HttpCode: 200
+      TargetGroupAttributes: 
+        - Key: "deregistration_delay.timeout_seconds"
+          Value: 300
+        - Key: "stickiness.enabled"
+          Value: false
+        - Key: "stickiness.type"
+          Value: lb_cookie
+        - Key: "stickiness.lb_cookie.duration_seconds"
+          Value: 86400
+      Targets: 
+        - Id: !Ref EC2
+          Port: 80
+
+
+# ------------------------------------------------------------#
+# ALB
+# ------------------------------------------------------------#      
+
+  InternetALB: 
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties: 
+      Scheme: internet-facing
+      LoadBalancerAttributes: 
+        - Key: deletion_protection.enabled
+          Value: false
+        - Key: idle_timeout.timeout_seconds
+          Value: 4000
+      
+      SecurityGroups:
+        - !Ref SECURITYGW
+      Subnets: 
+        - !Ref PUBLIC
+        - !Ref PUBLIC2
+      Tags: 
+        - Key: Name
+          Value: RAISEALB
+  ALBListenerHTTP: 
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties: 
+      Port: 80
+      Protocol: HTTP
+      DefaultActions: 
+        - TargetGroupArn: !Ref RAISETG
+          Type: forward
+      LoadBalancerArn: !Ref InternetALB
+
+
+
+# ------------------------------------------------------------#
+# Output Parameters
+# ------------------------------------------------------------#                
+
+Outputs:
+  EC2PublicIP:
+    Value: !GetAtt EC2.PublicIp
+    Description: Public IP of EC2 instance
+

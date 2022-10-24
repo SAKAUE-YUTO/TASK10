@@ -1,0 +1,37 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+ #=================================
+ #初期設定　サブネット及びSG
+ #=================================
+Parameters: 
+  GroupName:
+    Description: RDS SecurityGroup
+    Type: "AWS::EC2::SecurityGroup::GroupName"
+
+  Subnet:
+    Description: RDS Subnet
+    Type: AWS::EC2::Subnet::Id
+ #=================================
+ ##RDSインスタンス作成
+ #=================================
+Resources:
+  RDSInstance:
+    Type: "AWS::RDS::DBInstance"
+    Properties:
+      DBInstanceIdentifier: "RAISE-RDS"
+      DBInstanceClass: "db.t3.micro"
+      Engine: "mysql"
+      EngineVersion: "8.0.30"
+      MasterUsername: "admin"
+      MasterUserPassword: "Pacsadmi1n"
+      DBName: "utrds"
+      BackupRetentionPeriod: 0
+      MultiAZ: true
+      PubliclyAccessible: false
+      StorageType: "gp2"
+      AllocatedStorage: 20
+      StorageEncrypted: true
+      CopyTagsToSnapshot: false
+      DeletionProtection: false
+      DeleteAutomatedBackups: true
+    
