@@ -237,3 +237,5 @@ Outputs:
     Value: !GetAtt EC2.PublicIp
     Description: Public IP of EC2 instance
 
+
+
